@@ -5,7 +5,10 @@ __pycache__/
 
 # C extensions
 *.so
-
+*.csv
+*.ckpt
+nohup.out
+model-bins/
 # Distribution / packaging
 .Python
 build/

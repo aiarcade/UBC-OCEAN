@@ -13,6 +13,7 @@ model-bins/
 .Python
 build/
 develop-eggs/
+lightning_logs/
 dist/
 downloads/
 eggs/

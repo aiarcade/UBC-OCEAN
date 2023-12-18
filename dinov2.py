@@ -25,6 +25,7 @@ import torch.nn.functional as F
 import torch
 from torchmetrics.classification import MulticlassConfusionMatrix
 import warnings
+import PIL
 
 from settings import *
 from common import *
@@ -73,8 +74,8 @@ class DinoVisionTransformerClassifier(nn.Module):
         self.layers=4
         #self.transformer.train()
         self.linear_head = nn.Linear((1 + self.layers) * self.transformer.embed_dim, 6)
-        # self.classifier = nn.Sequential(
-        #     nn.Linear(1024, 256),
+        # self.linear_head = nn.Sequential(
+        #     nn.Linear((1 + self.layers) * self.transformer.embed_dim, 256),
         #     nn.ReLU(),
         #     nn.Linear(256, 6)
         # )
@@ -149,11 +150,13 @@ class UBCDataset(Dataset):
     def __init__(self, csv_file, root_dir, transform=None):
         self.data = pd.read_csv(csv_file)
         self.root_dir = root_dir
+        #Mean: tensor([0.8004, 0.6944, 0.7964])
+        #Std: tensor([0.1013, 0.1176, 0.0917])
         if transform is None:
             self.transform = transforms.Compose([
-                transforms.RandomResizedCrop(224),
-                transforms.RandomHorizontalFlip(), 
+                transforms.Resize([224,224]),
                 transforms.ToTensor(),
+                transforms.Normalize([0.8004, 0.6944, 0.7964], [0.1013, 0.1176, 0.0917]), 
             ])
 
         # Get all file names in the root directory and subdirectories

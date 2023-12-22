@@ -70,7 +70,7 @@ class LinearClassifierWrapper(nn.Module):
 class DinoVisionTransformerClassifier(nn.Module):
     def __init__(self):
         super(DinoVisionTransformerClassifier, self).__init__()
-        self.transformer = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitl14',pretrained=False)
+        self.transformer = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitl14',pretrained=True)
         self.layers=4
         #self.transformer.train()
         self.linear_head = nn.Linear((1 + self.layers) * self.transformer.embed_dim, 6)
@@ -89,7 +89,7 @@ class DinoVisionTransformerClassifier(nn.Module):
 
 
 class DinoV2Model(pl.LightningModule):
-    def __init__(self,learning_rate=8e-4):#,d_model, nhead, num_encoder_layers, num_decoder_layers,learning_rate=None):
+    def __init__(self,learning_rate=1e-6):#,d_model, nhead, num_encoder_layers, num_decoder_layers,learning_rate=None):
         super(DinoV2Model, self).__init__()
         self.dinvov2 = DinoVisionTransformerClassifier()#RNA_Model()
         self.lr=learning_rate

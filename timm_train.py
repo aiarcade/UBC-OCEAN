@@ -26,7 +26,13 @@ import torch
 from torchmetrics.classification import MulticlassConfusionMatrix
 import warnings
 import PIL
-from vit_pytorch.efficient import ViT
+import timm
+import torch
+import torchvision
+
+from torch import nn
+from torch.nn import functional as F
+from torchmetrics.classification import MulticlassAccuracy, MulticlassF1Score
 
 from settings import *
 from common import *
@@ -34,77 +40,67 @@ from common import *
 PIL.Image.MAX_IMAGE_PIXELS = 933120000
 
 
+class LitCancerSubtype(pl.LightningModule):
 
+    def __init__(self, net, lr: float = 1e-4):
+        super().__init__()
+        self.net = net
+        self.arch = net.pretrained_cfg.get('architecture')
+        self.num_classes = net.num_classes
+        self.train_accuracy = MulticlassAccuracy(num_classes=self.num_classes)
+        self.val_accuracy = MulticlassAccuracy(num_classes=self.num_classes)
+        self.val_f1_score = MulticlassF1Score(num_classes=self.num_classes)
+        self.learn_rate = lr
 
-class VitModel(pl.LightningModule):
-    def __init__(self,learning_rate=1e-6):#,d_model, nhead, num_encoder_layers, num_decoder_layers,learning_rate=None):
-        super(VitModel, self).__init__()
-        self.efficient_transformer = Linformer(
-            dim=128,
-            seq_len=49+1,  # 7x7 patches + 1 cls-token
-            depth=12,
-            heads=8,
-            k=64
-        )
-        self.model = ViT(
-            dim=128,
-            image_size=224,
-            patch_size=32,
-            num_classes=6,
-            transformer=self.efficient_transformer,
-            channels=3,
-        )
-        self.lr=learning_rate
-        self.criteria=nn.CrossEntropyLoss()
-        self.save_hyperparameters()
-        
-    def forward(self, src):
-        output=self.model(src)
-        return output
+    def forward(self, x):
+        y = F.softmax(self.net(x))
+        if y.isnan().any():
+            y = torch.ones_like(y) / self.num_classes
+        return y
 
-    def torch_balanced_accuracy(self,
-        y_true: torch.tensor,
-        y_pred: torch.tensor,
-        adjusted: bool = False
-    ) -> torch.float:
+    def compute_loss(self, y_hat, y):
+        #print(y)
+        return F.cross_entropy(y_hat, y.to(y_hat.dtype))
 
-        C = self.metric(y_pred, y_true)
-        per_class = torch.diag(C) / C.sum(axis=1)
-        if torch.any(torch.isnan(C)):
-            warnings.warn("y_pred contains classes not in y_true")
-            per_class = per_class[~torch.isnan(per_class)]
-        score = per_class.mean()
-
-        if adjusted:
-            n_classes = len(per_class)
-            chance = 1 / n_classes
-            score -= chance
-            score /= 1 - chance
-        return score
-
-    def loss(self,pred,target):
-        loss =  self.criteria(pred,target)#self.torch_balanced_accuracy(target,predicted_classes_batch )
-        #loss = loss[~torch.isnan(loss)].mean()
-        return loss
     def training_step(self, batch, batch_idx):
         x, y = batch
-        #print(x.shape)
-        outputs = self(x)  # Add an extra dimension for input_size
-        loss = self.loss(outputs,y)
+        y_hat = self(x)
+        lbs = torch.argmax(y, axis=1)
+        #print(f"{lbs=} ?= {y_hat=}")
+        loss = self.compute_loss(y_hat, y)
+        #print(f"{y=} ?= {y_hat=} -> {loss=}")
+        self.log("train_loss", loss, logger=True, prog_bar=True)
+        #print(f"{lb=} ?= {y_hat=} -> {self.train_accuracy(y_hat, lbs)}")
+        self.log("train_acc", self.train_accuracy(y_hat, lbs), logger=True, prog_bar=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        #print(len(batch[0]))
         x, y = batch
-        #print(x.shape)
-        outputs = self(x)  # Add an extra dimension for input_size
-        loss =  self.loss(outputs,y)
-        self.log("val_loss", loss, prog_bar=True,sync_dist=True)
+
+        y_hat = self(x)
+        lbs = torch.argmax(y, dim=0)
+        loss = self.compute_loss(y_hat, y)
+        self.log("valid_loss", loss, logger=True, prog_bar=True)
+        #self.log("valid_acc", self.val_accuracy(y_hat, lbs), logger=True, prog_bar=False)
+        #self.log("valid_f1", self.val_f1_score(y_hat, lbs), logger=True, prog_bar=True)
         return loss
+
     def configure_optimizers(self):
-        # Adam optimizer
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
-        return optimizer
+        #optimizer = AdaBound(self.parameters(), lr=self.learn_rate)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=self.learn_rate)
+        #optimizer = Lion(self.parameters(), lr=self.learn_rate, weight_decay=1e-2)
+        #optimizer = Adan(self.parameters(), lr=self.learn_rate, betas=(0.02, 0.08, 0.01), weight_decay=0.02)
+        #scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        #    optimizer, T_max=self.trainer.max_epochs, eta_min=1e-6, verbose=True)
+        #scheduler = torch.optim.lr_scheduler.CyclicLR(
+        #  optimizer, base_lr=self.learn_rate, max_lr=self.learn_rate * 5,
+        #  step_size_up=5, cycle_momentum=False, mode="triangular2", verbose=True)
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer, max_lr=self.learn_rate * 5, steps_per_epoch=1, epochs=self.trainer.max_epochs)
+        return [optimizer], [scheduler]
+
+
+
 
 
 class UBCDataset(Dataset):
@@ -143,15 +139,15 @@ class UBCDataset(Dataset):
         label=img_path.split("/")[-2]
         # Convert label to categorical if needed
         label_categorical = {'CC': 0, 'EC': 1, 'HGSC': 2, 'LGSC': 3, 'MC': 4,'Other': 5}[label]
-
+        onehot=[0,0,0,0,0,0]
+        onehot[label_categorical]=1
         # Load the image
         image = Image.open(img_path).convert('RGB')
 
         if self.transform:
             image = self.transform(image)
 
-        return image, label_categorical
-
+        return image, torch.tensor(onehot).to(int)
     def shuffle(self):
         import random
         random.shuffle(self.file_list)
@@ -192,10 +188,11 @@ if __name__ == "__main__":
     pl.seed_everything(42)
     torch.backends.cuda.matmul.allow_tf32 = True 
     torch.backends.cudnn.allow_tf32 = True
-    lmodel=VitModel()
+    net = timm.create_model('tf_efficientnetv2_s_in21ft1k', pretrained=True, num_classes=6)
+    lmodel = LitCancerSubtype(net=net, lr=1e-4)
     datamodule = UBCDataModule(batch_size=TRAIN_BATCH_SIZE,data_file=TRAIN_CSV,data_root=TRAIN_PROCESSED_DIR)
     checkpoint_callback = pl.callbacks.ModelCheckpoint(
-        monitor='val_loss',
+        monitor='valid_loss',
         mode='min',
         save_top_k=1,
         save_last=True,

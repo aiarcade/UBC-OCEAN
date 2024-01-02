@@ -208,7 +208,7 @@ class UBCDataModule(pl.LightningDataModule):
         train_size = int(0.9 * len(dataset))
         val_size = (len(dataset) - train_size) 
         #test_size = len(dataset) - train_size - val_size
-        self.no_workers=24
+        self.no_workers=8
         self.train_dataset, self.val_dataset = random_split(dataset, [train_size, val_size])
 
     def train_dataloader(self) -> DataLoader:
@@ -240,6 +240,6 @@ if __name__ == "__main__":
 
     trainer = pl.Trainer(max_epochs=TRAIN_EPOCHS, callbacks=[checkpoint_callback],
         accelerator=ACCELERATION, devices=DEVICES, 
-        strategy="ddp")
+        strategy="fsdp")
 
     trainer.fit(lmodel, datamodule=datamodule)

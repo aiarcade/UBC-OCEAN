@@ -44,7 +44,7 @@ class TiledImageDataset(Dataset):
                 )
 
                 tile = img.crop(box)
-                if self.percent_black(tile)>90:
+                if self.percent_black(tile)>80:
                     continue
                 # If the tile size is smaller than specified, resize it
                 if tile.size[0] < self.tile_size or tile.size[1] < self.tile_size:
@@ -84,7 +84,7 @@ if __name__ == "__main__":
     csv_file_path = TRAIN_CSV
     images_root_dir = TRAIN_RAW_DIR
     output_dir = TRAIN_PROCESSED_DIR
-    tile_size = 256
+    tile_size = 224
 
     df = pd.read_csv(csv_file_path)
     total_rows = len(df)
